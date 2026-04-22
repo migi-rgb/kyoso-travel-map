@@ -869,11 +869,13 @@ Promise.all([
   const proj   = d3.geoNaturalEarth1().scale(153).translate([480, 250]);
   const pathFn = d3.geoPath(proj);
 
+  // Declare g first so zoom callback can reference it
+  const g = svg.append('g').attr('class','countries');
+
   // D3 zoom
   const zoom = d3.zoom()
     .scaleExtent([1, 8])
     .filter(event => {
-      // On mobile, block zoom gestures when map is locked
       if (isMobile() && mapLocked) return false;
       return !event.ctrlKey && !event.button;
     })
@@ -884,12 +886,11 @@ Promise.all([
 
   svg.call(zoom);
 
-  // Block single-finger touch scroll on map when locked (prevent page scroll interference)
+  // Block single-finger touch scroll on map when locked
   document.getElementById('map-svg').addEventListener('touchmove', (e) => {
     if (isMobile() && mapLocked) e.stopPropagation();
   }, { passive: true });
 
-  const g = svg.append('g').attr('class','countries');
   g.selectAll('path.country')
     .data(geoFeatures).join('path')
     .attr('class','country')
