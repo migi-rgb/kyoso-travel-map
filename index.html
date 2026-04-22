@@ -267,7 +267,9 @@
         <div id="tooltip" class="bg-white rounded-xl border border-slate-200 p-3"
              style="box-shadow:0 4px 24px rgba(4,44,83,.13)">
           <div id="tt-country" class="font-medium text-[14px] text-slate-800 mb-1.5"></div>
-          <div id="tt-summary" class="text-[11px] text-slate-400 mb-2 pb-2 border-b border-slate-100"></div>
+          <!-- Hero visitor count (shown when total > 0) -->
+          <div id="tt-hero"></div>
+          <div id="tt-summary" class="text-[11px] text-slate-400 mb-2"></div>
           <div id="tt-entries" class="space-y-2 max-h-44 overflow-y-auto"></div>
           <div id="tt-hint" class="mt-2 pt-2 border-t border-slate-100 text-[11px] font-medium"
                style="color:#185FA5"></div>
@@ -703,17 +705,34 @@ function buildPatterns(d3, features) {
 }
 
 /* ════════════════════════════════════════════════════
-   Render Map
+   Render Map  +  Count Badges
 ════════════════════════════════════════════════════ */
+
+/* Badge colour: scales from warm -> vivid as count grows */
+function badgeColor(count) {
+  if (count >= 10) return { bg: '#042C53', text: '#fff' };
+  if (count >= 6)  return { bg: '#185FA5', text: '#fff' };
+  if (count >= 3)  return { bg: '#1D9E75', text: '#fff' };
+  return            { bg: '#EF9F27',       text: '#fff' };
+}
+function badgeRadius(count) {
+  if (count >= 10) return 11;
+  if (count >= 5)  return 9.5;
+  return 8.5;
+}
+
 function renderMap() {
-  if (!svgEl || !geoFeatures.length) return;
+  if (!svgEl || !geoFeatures.length || !d3ref) return;
+  const d3     = d3ref;
   const isHeat = currentFilter === 'heat';
   const maxCnt = isHeat
     ? Math.max(...geoFeatures.map(f => getStats(f.properties.name, 'heat').total), 1)
     : 1;
+
+  /* 1. Colour country paths */
   svgEl.select('g.countries').selectAll('path.country').each(function(d) {
     const name = d.properties.name;
-    const el   = d3ref.select(this);
+    const el   = d3.select(this);
     el.classed('selected', name === selectedCountry);
     if (isHeat) { el.attr('fill', heatColor(getStats(name, 'heat').total, maxCnt)); return; }
     const { study, travel } = getStats(name, currentFilter);
@@ -724,6 +743,50 @@ function renderMap() {
   });
   svgEl.select('g.countries').selectAll('path.country')
     .style('cursor', d => getStats(d.properties.name, 'all').total > 0 ? 'pointer' : 'crosshair');
+
+  /* 2. Count badges */
+  const proj   = d3.geoNaturalEarth1().scale(153).translate([480, 250]);
+  const pathFn = d3.geoPath(proj);
+
+  const badgeData = geoFeatures
+    .map(f => ({ f, total: getStats(f.properties.name, 'all').total }))
+    .filter(d => d.total > 0);
+
+  let badgeG = svgEl.select('g.countries').select('g.badges');
+  if (badgeG.empty()) {
+    badgeG = svgEl.select('g.countries').append('g').attr('class', 'badges');
+  }
+
+  const badges = badgeG.selectAll('g.badge').data(badgeData, d => d.f.properties.name);
+  badges.exit().remove();
+
+  const entered = badges.enter().append('g').attr('class', 'badge')
+    .style('pointer-events', 'none');
+  entered.append('circle');
+  entered.append('text')
+    .attr('text-anchor', 'middle')
+    .attr('dominant-baseline', 'central')
+    .style('font-family', "'DM Sans','Noto Sans JP',sans-serif")
+    .style('font-weight', '700');
+
+  entered.merge(badges).each(function(d) {
+    const centroid = pathFn.centroid(d.f);
+    if (!centroid || isNaN(centroid[0]) || isNaN(centroid[1])) return;
+    const { bg, text } = badgeColor(d.total);
+    const r = badgeRadius(d.total);
+    const fs = d.total >= 10 ? 7.5 : 7;
+    const label = d.total > 99 ? '99+' : String(d.total);
+    d3.select(this).attr('transform', `translate(${centroid[0]},${centroid[1]})`);
+    d3.select(this).select('circle')
+      .attr('r', r)
+      .attr('fill', bg)
+      .attr('stroke', '#fff')
+      .attr('stroke-width', 1.4);
+    d3.select(this).select('text')
+      .attr('font-size', fs)
+      .attr('fill', text)
+      .text(label);
+  });
 }
 
 /* ════════════════════════════════════════════════════
@@ -802,18 +865,35 @@ function updateStats() {
 }
 
 /* ════════════════════════════════════════════════════
-   Tooltip
+   Tooltip (enhanced: big visitor count at top)
 ════════════════════════════════════════════════════ */
 const tooltip = document.getElementById('tooltip');
 function showTooltip(event, name) {
   if (isMobile()) return;
   const s = getStats(name, 'all');
   document.getElementById('tt-country').textContent = (EMOJIS[name] || '🌍') + ' ' + name;
+
   if (s.total === 0) {
+    document.getElementById('tt-hero').style.display  = 'none';
     document.getElementById('tt-summary').textContent = 'まだ投稿がありません';
     document.getElementById('tt-entries').innerHTML   = '';
   } else {
-    document.getElementById('tt-summary').textContent = `合計 ${s.total}人（留学 ${s.study} / 旅行 ${s.travel}）`;
+    /* Hero count */
+    const hero = document.getElementById('tt-hero');
+    hero.style.display = '';
+    const { bg } = badgeColor(s.total);
+    hero.innerHTML = `
+      <div class="flex items-center justify-center gap-2 py-2 px-3 rounded-lg mb-2"
+           style="background:${bg}10;border:1.5px solid ${bg}40">
+        <span class="text-2xl font-bold" style="color:${bg}">${s.total}</span>
+        <div class="text-left">
+          <div class="text-[13px] font-bold" style="color:${bg}">人が訪問！</div>
+          <div class="text-[10px] text-slate-400">
+            🎓 留学 ${s.study}人 &nbsp;✈️ 旅行 ${s.travel}人
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('tt-summary').textContent = '';
     document.getElementById('tt-entries').innerHTML = s.entries.map(e => `
       <div class="border-l-[3px] pl-2 mb-2"
            style="border-color:${e.type === 'study' ? STUDY_COLOR : TRAVEL_COLOR}">
@@ -835,7 +915,7 @@ function showTooltip(event, name) {
   let x = event.clientX - r.left + 14;
   let y = event.clientY - r.top  + 14;
   if (x + 275 > r.width)  x = event.clientX - r.left - 280;
-  if (y + 300 > r.height) y = event.clientY - r.top  - 280;
+  if (y + 320 > r.height) y = event.clientY - r.top  - 320;
   tooltip.style.left    = Math.max(4, x) + 'px';
   tooltip.style.top     = Math.max(4, y) + 'px';
   tooltip.style.opacity = '1';
