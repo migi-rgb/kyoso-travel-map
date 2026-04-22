@@ -982,6 +982,7 @@ window.switchRankTab = function(type) {
 };
 
 
+window.setFilter = btn => {
   currentFilter = btn.dataset.f;
   document.querySelectorAll('.fbtn').forEach(b => {
     b.className = 'fbtn';
