@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>共創生 世界渡航マップ | 九州大学共創学部</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          navy:  { DEFAULT: '#042C53', light: '#0C447C' },
+          ocean: '#c8dde8',
+          kyuso: { blue: '#185FA5', teal: '#1D9E75', amber: '#EF9F27' }
+        },
+        fontFamily: {
+          sans: ['"DM Sans"', '"Noto Sans JP"', 'sans-serif']
+        }
+      }
+    }
+  }
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  html, body {
+    height: 100%;
+    font-family: 'DM Sans', 'Noto Sans JP', sans-serif;
+    overflow: hidden;
+  }
+
+  /* ── Desktop layout ── */
+  #app { display: flex; flex-direction: column; height: 100vh; }
+  #body-row { display: flex; flex: 1; min-height: 0; }
+  #map-col { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+  #map-wrap { position: relative; flex: 1; min-height: 0; background: #c8dde8; overflow: hidden; }
+  #map-svg  { width: 100%; height: 100%; display: block; }
+  #right-panel { width: 280px; background: white; border-left: 1px solid #e2e8f0; display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
+  #right-panel::-webkit-scrollbar { width: 4px; }
+  #right-panel::-webkit-scrollbar-thumb { background: #d0d8e4; border-radius: 2px; }
+  #mobile-tabs { display: none; }
+
+  /* ── Mobile layout ── */
+  @media (max-width: 700px) {
+    html, body { overflow: hidden; }
+    #app { height: 100dvh; height: 100vh; }
+    #body-row { flex: 1; position: relative; min-height: 0; }
+
+    /* Map pane */
+    #map-col {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      transition: transform 0.32s cubic-bezier(.4,0,.2,1), opacity 0.25s;
+    }
+    #map-col.hidden-pane {
+      transform: translateX(-100%); opacity: 0; pointer-events: none;
+    }
+
+    /* Form pane */
+    #right-panel {
+      position: absolute; inset: 0;
+      width: 100%; border-left: none;
+      transform: translateX(100%); opacity: 0; pointer-events: none;
+      transition: transform 0.32s cubic-bezier(.4,0,.2,1), opacity 0.25s;
+      overflow-y: auto; -webkit-overflow-scrolling: touch;
+    }
+    #right-panel.active-pane {
+      transform: translateX(0); opacity: 1; pointer-events: auto;
+    }
+    #map-col.active-pane {
+      transform: translateX(0); opacity: 1; pointer-events: auto;
+    }
+
+    /* Bottom tabs */
+    #mobile-tabs {
+      display: flex;
+      position: relative; z-index: 50;
+      background: #042C53;
+      border-top: 1px solid rgba(255,255,255,0.15);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    .mtab {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; padding: 10px 4px 9px;
+      color: rgba(255,255,255,0.5); font-size: 10px; font-weight: 500;
+      cursor: pointer; transition: all .2s; border: none; background: none;
+      font-family: inherit; gap: 3px; -webkit-tap-highlight-color: transparent;
+    }
+    .mtab svg { width: 20px; height: 20px; }
+    .mtab.active { color: #fff; }
+    .mtab.active .tab-bar {
+      background: #1D9E75;
+    }
+    .tab-bar {
+      position: absolute; top: 0; height: 2.5px; width: 40%;
+      background: transparent; border-radius: 0 0 3px 3px;
+      transition: background .2s;
+    }
+
+    /* Map touch lock overlay */
+    #map-touch-guard {
+      position: absolute; inset: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(4,44,83,0.35);
+      backdrop-filter: blur(1px);
+      transition: opacity 0.3s;
+    }
+    #map-touch-guard.unlocked { opacity: 0; pointer-events: none; }
+    #unlock-btn {
+      background: #042C53; color: white;
+      padding: 10px 22px; border-radius: 30px;
+      font-size: 13px; font-weight: 600; font-family: inherit;
+      border: 2px solid rgba(255,255,255,0.3);
+      box-shadow: 0 4px 20px rgba(4,44,83,0.5);
+      cursor: pointer; display: flex; align-items: center; gap-8px;
+      -webkit-tap-highlight-color: transparent;
+      gap: 8px;
+    }
+    #map-lock-hint {
+      position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+      background: rgba(4,44,83,0.75); color: #9FE1CB;
+      font-size: 11px; padding: 5px 14px; border-radius: 20px;
+      white-space: nowrap; pointer-events: none;
+      transition: opacity .3s; opacity: 0;
+    }
+    #map-lock-hint.show { opacity: 1; }
+  }
+
+  /* Map interaction */
+  .country { transition: stroke-width 0.12s, stroke 0.12s, filter 0.12s; }
+  .country:hover { stroke: #fff !important; stroke-width: 1.4 !important; filter: brightness(1.08); }
+  .country.selected { stroke: #FFD700 !important; stroke-width: 2.5 !important; filter: brightness(1.12); }
+
+  #tooltip {
+    position: absolute; pointer-events: none; opacity: 0;
+    transition: opacity 0.15s; z-index: 40;
+    max-width: 265px; min-width: 160px;
+  }
+  #loading-overlay { transition: opacity 0.4s; }
+  #loading-overlay.hidden { opacity: 0; pointer-events: none; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .pulse-anim { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes countUp { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
+  .count-anim { animation: countUp 0.35s ease-out; }
+  @keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+  .slide-up { animation: slideUp 0.3s ease-out; }
+
+  .fbtn {
+    padding: 4px 13px; border-radius: 16px; font-size: 12px; cursor: pointer;
+    border: 1px solid #d1d5db; background: transparent; color: #6b7280;
+    font-family: inherit; transition: all .15s;
+  }
+  .fbtn:hover { border-color: #9ca3af; }
+  .fbtn.active-all    { border-color:#1D9E75; background:#E1F5EE; color:#085041; font-weight:500; }
+  .fbtn.active-study  { border-color:#185FA5; background:#EFF6FF; color:#1e40af; font-weight:500; }
+  .fbtn.active-travel { border-color:#BA7517; background:#FAEEDA; color:#633806; font-weight:500; }
+  .fbtn.active-heat   { border-color:#7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:500; }
+  .tbtn {
+    flex: 1; padding: 7px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 500;
+    border: 1px solid #d1d5db; background: transparent; color: #6b7280;
+    font-family: inherit; transition: all .15s;
+  }
+  .tbtn.tt { border-color:#BA7517; background:#FAEEDA; color:#633806; }
+  .tbtn.ts { border-color:#185FA5; background:#EFF6FF; color:#1e40af; }
+  input, select, textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 8px;
+    font-size: 13px; font-family: inherit; color: #1e293b; background: white;
+    outline: none; transition: border-color .15s; -webkit-appearance: none;
+  }
+  input:focus, select:focus, textarea:focus { border-color: #185FA5; }
+  textarea { resize: none; line-height: 1.5; }
+
+  /* Mobile form improvements */
+  @media (max-width: 700px) {
+    input, select, textarea { font-size: 16px; /* prevents iOS zoom */ padding: 10px 12px; }
+    .fbtn { padding: 5px 14px; font-size: 12px; }
+  }
+</style>
+</head>
+<body class="bg-slate-100">
+<div id="app">
+  <!-- ══ HEADER ══ -->
+  <header class="flex items-center justify-between flex-wrap gap-2 px-4 py-3 text-white shrink-0"
+          style="background:#042C53">
+    <div>
+      <p class="text-[10px] tracking-[2.5px] uppercase" style="color:#85B7EB">Kyushu University · 共創学部</p>
+      <h1 class="text-xl font-medium tracking-tight">世界渡航マップ</h1>
+    </div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <div id="sync-badge" class="flex items-center gap-1.5 text-[11px] rounded-md px-2.5 py-1.5 border"
+           style="background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.25);color:#9FE1CB">
+        <span id="sync-dot" class="w-2 h-2 rounded-full pulse-anim" style="background:#9ca3af"></span>
+        <span id="sync-label">接続中...</span>
+      </div>
+      <div class="flex gap-2">
+        <div class="rounded-lg px-2.5 py-1.5 text-center border" style="background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2)">
+          <div class="text-base font-medium" id="h-countries" style="color:#85B7EB">0</div>
+          <div class="text-[9px]" style="color:#B5D4F4">訪問国</div>
+        </div>
+        <div class="rounded-lg px-2.5 py-1.5 text-center border" style="background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2)">
+          <div class="text-base font-medium" id="h-study" style="color:#5DCAA5">0</div>
+          <div class="text-[9px]" style="color:#B5D4F4">留学</div>
+        </div>
+        <div class="rounded-lg px-2.5 py-1.5 text-center border" style="background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2)">
+          <div class="text-base font-medium" id="h-travel" style="color:#EF9F27">0</div>
+          <div class="text-[9px]" style="color:#B5D4F4">旅行</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ══ ADVENTURE BANNER ══ -->
+  <div class="flex items-center gap-3 px-4 py-2 text-[12px] font-medium shrink-0"
+       style="background:#633806;color:#FAEEDA">
+    <span id="adv-msg" class="flex-1 min-w-0 truncate"></span>
+    <span id="adv-count" class="text-[10px] tracking-wide opacity-80 shrink-0">193カ国中 0カ国</span>
+  </div>
+
+  <!-- ══ BODY ══ -->
+  <div id="body-row" class="flex flex-1 min-h-0">
+
+    <!-- MAP COLUMN -->
+    <div id="map-col" class="active-pane">
+      <!-- Filter bar -->
+      <div class="flex items-center gap-1.5 px-3 py-2 bg-white border-b border-slate-200 shrink-0 flex-wrap">
+        <span class="text-[11px] text-slate-400 font-medium">表示：</span>
+        <button class="fbtn active-all" data-f="all"    onclick="setFilter(this)">すべて</button>
+        <button class="fbtn"            data-f="study"  onclick="setFilter(this)">留学</button>
+        <button class="fbtn"            data-f="travel" onclick="setFilter(this)">旅行</button>
+        <button class="fbtn"            data-f="heat"   onclick="setFilter(this)">🌡 熱量</button>
+      </div>
+      <!-- Map -->
+      <div id="map-wrap">
+        <svg id="map-svg" viewBox="0 0 960 500" preserveAspectRatio="xMidYMid meet"></svg>
+
+        <!-- Mobile touch guard (locked by default on mobile) -->
+        <div id="map-touch-guard">
+          <button id="unlock-btn" onclick="unlockMap()">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+            </svg>
+            地図を操作する
+          </button>
+        </div>
+        <div id="map-lock-hint">↑ スワイプで地図ロック</div>
+
+        <!-- Loading -->
+        <div id="loading-overlay"
+             class="absolute inset-0 flex items-center justify-center text-[13px] font-medium"
+             style="background:rgba(200,221,232,.92);color:#042C53;z-index:30">
+          <div class="flex items-center gap-2">
+            <svg class="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="#185FA5" stroke-width="3"
+                      stroke-dasharray="31.4" stroke-dashoffset="10"/>
+            </svg>
+            地図を読み込み中...
+          </div>
+        </div>
+        <!-- Tooltip -->
+        <div id="tooltip" class="bg-white rounded-xl border border-slate-200 p-3"
+             style="box-shadow:0 4px 24px rgba(4,44,83,.13)">
+          <div id="tt-country" class="font-medium text-[14px] text-slate-800 mb-1.5"></div>
+          <div id="tt-summary" class="text-[11px] text-slate-400 mb-2 pb-2 border-b border-slate-100"></div>
+          <div id="tt-entries" class="space-y-2 max-h-44 overflow-y-auto"></div>
+          <div id="tt-hint" class="mt-2 pt-2 border-t border-slate-100 text-[11px] font-medium" style="color:#185FA5"></div>
+        </div>
+        <!-- Selected badge -->
+        <div id="selected-badge"
+             class="absolute top-3 left-1/2 -translate-x-1/2 hidden items-center gap-2
+                    bg-yellow-50 border border-yellow-300 rounded-full px-3 py-1
+                    text-[12px] font-medium text-yellow-800 shadow-sm" style="z-index:15">
+          <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/>
+          </svg>
+          <span id="badge-text"></span>
+          <button onclick="clearSelection()" class="ml-1 text-yellow-500 hover:text-yellow-800 font-bold">×</button>
+        </div>
+        <!-- Legend -->
+        <div class="absolute bottom-3 left-3 bg-white/92 border border-blue-200 rounded-lg
+                    px-2.5 py-1.5 flex flex-wrap gap-2 items-center text-[11px]"
+             style="color:#042C53;z-index:10">
+          <div id="leg-normal" class="flex gap-2.5 items-center flex-wrap">
+            <div class="flex items-center gap-1"><div class="w-3 h-3 rounded-sm" style="background:#185FA5"></div>留学</div>
+            <div class="flex items-center gap-1"><div class="w-3 h-3 rounded-sm" style="background:#EF9F27"></div>旅行</div>
+            <div class="flex items-center gap-1"><div class="w-3 h-3 rounded-sm" style="background:linear-gradient(90deg,#185FA5 50%,#EF9F27 50%)"></div>両方</div>
+            <div class="flex items-center gap-1"><div class="w-3 h-3 rounded-sm bg-slate-300"></div>未訪問</div>
+          </div>
+          <div id="leg-heat" class="hidden items-center gap-1.5">
+            <div class="flex h-3 w-16 rounded-sm overflow-hidden">
+              <div style="flex:1;background:#DBEAFE"></div><div style="flex:1;background:#93C5FD"></div>
+              <div style="flex:1;background:#3B82F6"></div><div style="flex:1;background:#1D4ED8"></div>
+              <div style="flex:1;background:#1e3a8a"></div>
+            </div>
+            <span>少→多</span>
+          </div>
+        </div>
+      </div><!-- /map-wrap -->
+    </div><!-- /map-col -->
+
+    <!-- RIGHT PANEL / FORM PANE -->
+    <aside id="right-panel">
+      <!-- Stats -->
+      <div class="p-4 shrink-0">
+        <p class="text-[10px] tracking-[2px] uppercase text-slate-400 font-medium mb-3">統計 &amp; ランキング</p>
+        <div class="grid grid-cols-2 gap-2 mb-3">
+          <div class="bg-slate-50 rounded-lg p-3">
+            <div class="text-2xl font-semibold count-anim" id="s-countries" style="color:#0C447C">0</div>
+            <div class="text-[11px] mt-0.5" style="color:#378ADD">訪問国数</div>
+          </div>
+          <div class="bg-slate-50 rounded-lg p-3">
+            <div class="text-2xl font-semibold count-anim" id="s-total" style="color:#085041">0</div>
+            <div class="text-[11px] mt-0.5" style="color:#1D9E75">総投稿数</div>
+          </div>
+        </div>
+        <div class="mb-3">
+          <div class="flex justify-between text-[11px] text-slate-400 mb-1">
+            <span>世界制覇率</span><span id="progress-pct">0%</span>
+          </div>
+          <div class="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+            <div id="progress-bar" class="h-full rounded-full transition-all duration-700"
+                 style="width:0%;background:linear-gradient(90deg,#185FA5,#1D9E75)"></div>
+          </div>
+        </div>
+        <!-- Ranking tabs -->
+        <div class="flex gap-1 mb-2.5 bg-slate-100 rounded-lg p-0.5">
+          <button id="rank-tab-study"
+                  onclick="switchRankTab('study')"
+                  class="rank-tab flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md
+                         text-[11px] font-medium transition-all duration-200
+                         bg-white shadow-sm text-blue-700">
+            <span class="w-2 h-2 rounded-full shrink-0" style="background:#185FA5"></span>
+            🎓 留学 TOP3
+          </button>
+          <button id="rank-tab-travel"
+                  onclick="switchRankTab('travel')"
+                  class="rank-tab flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md
+                         text-[11px] font-medium transition-all duration-200 text-slate-500">
+            <span class="w-2 h-2 rounded-full shrink-0" style="background:#EF9F27"></span>
+            ✈️ 旅行 TOP3
+          </button>
+        </div>
+
+        <!-- Study ranking -->
+        <div id="rank-study">
+          <div id="top3-study">
+            <p class="text-[12px] text-slate-400 text-center py-3">まだ留学情報がありません</p>
+          </div>
+        </div>
+        <!-- Travel ranking -->
+        <div id="rank-travel" class="hidden">
+          <div id="top3-travel">
+            <p class="text-[12px] text-slate-400 text-center py-3">まだ旅行情報がありません</p>
+          </div>
+        </div>
+      </div>
+      <div class="h-px bg-slate-200 mx-4 shrink-0"></div>
+
+      <!-- Form -->
+      <div class="p-4 shrink-0" id="form-section">
+        <p class="text-[10px] tracking-[2px] uppercase text-slate-400 font-medium mb-3">渡航を追加</p>
+        <!-- Country auto-fill banner (mobile: shows when country selected from map) -->
+        <div id="mobile-autofill-banner"
+             class="hidden mb-3 items-center gap-2 bg-yellow-50 border border-yellow-300
+                    rounded-lg px-3 py-2 text-[12px] font-medium text-yellow-800 slide-up">
+          <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/>
+          </svg>
+          <span id="banner-country-name"></span>が選択されました
+        </div>
+        <div id="flash"
+             class="hidden mb-3 bg-emerald-50 border border-emerald-300 rounded-lg px-3 py-2
+                    text-[12px] font-medium text-emerald-800">
+          追加しました！みんなの地図に反映されました ✓
+        </div>
+        <div id="err"
+             class="hidden mb-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2
+                    text-[12px] text-red-700"></div>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-[12px] text-slate-500 mb-1">ニックネーム <span class="text-red-400">*</span></label>
+            <input id="f-nick" placeholder="例：Haruki" autocomplete="nickname">
+          </div>
+          <div>
+            <label class="block text-[12px] text-slate-500 mb-1">種類 <span class="text-red-400">*</span></label>
+            <div class="flex gap-2">
+              <button class="tbtn tt" data-t="travel" onclick="setType(this)">旅行</button>
+              <button class="tbtn"    data-t="study"  onclick="setType(this)">留学</button>
+            </div>
+          </div>
+          <div>
+            <label class="block text-[12px] text-slate-500 mb-1">
+              国名 <span class="text-red-400">*</span>
+              <span class="ml-1 text-[10px]" style="color:#185FA5">地図からも選択可</span>
+            </label>
+            <select id="f-country"><option value="">選択してください</option></select>
+          </div>
+          <div>
+            <label class="block text-[12px] text-slate-500 mb-1" id="f-detail-label">
+              おすすめスポット <span class="text-red-400">*</span>
+            </label>
+            <input id="f-detail" placeholder="例：グランドキャニオン">
+          </div>
+          <div>
+            <label class="block text-[12px] text-slate-500 mb-1">一言コメント <span class="text-red-400">*</span></label>
+            <textarea id="f-comment" rows="3" placeholder="渡航の感想を一言"></textarea>
+          </div>
+          <button id="submit-btn" onclick="submitEntry()"
+                  class="w-full py-3 rounded-lg text-white text-[13px] font-medium
+                         transition-all hover:opacity-85 active:scale-[.98] disabled:opacity-50"
+                  style="background:#042C53">
+            地図に追加する
+          </button>
+        </div>
+      </div>
+      <div class="h-px bg-slate-200 mx-4 shrink-0"></div>
+
+      <!-- Recent -->
+      <div class="p-4 pb-6">
+        <p class="text-[10px] tracking-[2px] uppercase text-slate-400 font-medium mb-2">最近の投稿</p>
+        <div id="recent-list">
+          <p class="text-[12px] text-slate-400 text-center py-3">まだ投稿がありません</p>
+        </div>
+      </div>
+    </aside>
+  </div><!-- /body-row -->
+
+  <!-- ══ MOBILE BOTTOM TABS ══ -->
+  <nav id="mobile-tabs" class="shrink-0">
+    <button class="mtab active" id="tab-map" onclick="switchTab('map')">
+      <div class="tab-bar"></div>
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+      </svg>
+      地図を見る
+    </button>
+    <button class="mtab" id="tab-form" onclick="switchTab('form')">
+      <div class="tab-bar"></div>
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path d="M12 4v16m8-8H4"/>
+      </svg>
+      投稿する
+    </button>
+    <button class="mtab" id="tab-stats" onclick="switchTab('stats')">
+      <div class="tab-bar"></div>
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+      </svg>
+      統計
+    </button>
+  </nav>
+</div>
+
+<!-- ══ SCRIPT ══ -->
+<script type="module">
+import { initializeApp }                   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getDatabase, ref, push, onValue } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+
+const firebaseConfig = {
+  apiKey:            "AIzaSyAvYy3JH_lucDt0FEAtu80CR2FWeh948LQ",
+  authDomain:        "world-domination-719d2.firebaseapp.com",
+  databaseURL:       "https://world-domination-719d2-default-rtdb.firebaseio.com",
+  projectId:         "world-domination-719d2",
+  storageBucket:     "world-domination-719d2.firebasestorage.app",
+  messagingSenderId: "326733275332",
+  appId:             "1:326733275332:web:9145258b04e258501ca991"
+};
+
+const fbApp      = initializeApp(firebaseConfig);
+const db         = getDatabase(fbApp);
+const entriesRef = ref(db, 'entries');
+
+/* ── Constants ── */
+const ADV_MSGS = [
+  "🏔️ ブータン — 幸福の国へ初の共創生を送り出そう！",
+  "🌊 キリバス — 水没の危機にある島国を記録する使命がある！",
+  "🏜️ モーリタニア — 広大なサハラ砂漠、まだ誰も踏み入れていない！",
+  "🌿 ヴァヌアツ — 秘境の島々、共創生の冒険を待っている！",
+  "🗻 東ティモール — 若き独立国への第一歩を踏み出そう！",
+];
+document.getElementById('adv-msg').textContent = ADV_MSGS[Math.floor(Math.random() * ADV_MSGS.length)];
+
+const COUNTRIES_LIST = [
+  "Afghanistan","Albania","Algeria","Argentina","Armenia","Australia","Austria","Azerbaijan",
+  "Bangladesh","Belarus","Belgium","Bhutan","Bolivia","Bosnia and Herz.","Brazil","Bulgaria",
+  "Cambodia","Cameroon","Canada","Chile","China","Colombia","Costa Rica","Croatia","Cuba",
+  "Czech Republic","Denmark","Ecuador","Egypt","Estonia","Ethiopia","Finland","France",
+  "Georgia","Germany","Ghana","Greece","Guatemala","Honduras","Hungary","Iceland","India",
+  "Indonesia","Iran","Iraq","Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazakhstan",
+  "Kenya","Kuwait","Laos","Latvia","Lebanon","Libya","Lithuania","Luxembourg","Malaysia",
+  "Malta","Mexico","Moldova","Mongolia","Montenegro","Morocco","Mozambique","Myanmar","Nepal",
+  "Netherlands","New Zealand","Nigeria","North Macedonia","Norway","Oman","Pakistan","Panama",
+  "Paraguay","Peru","Philippines","Poland","Portugal","Qatar","Romania","Russia","Saudi Arabia",
+  "Senegal","Serbia","Singapore","Slovakia","Slovenia","Somalia","South Africa","South Korea",
+  "Spain","Sri Lanka","Sudan","Sweden","Switzerland","Taiwan","Tanzania","Thailand","Tunisia",
+  "Turkey","UAE","Uganda","Ukraine","United Kingdom","United States","Uruguay","Uzbekistan",
+  "Venezuela","Vietnam","Zimbabwe"
+];
+const EMOJIS = {
+  "France":"🇫🇷","United States":"🇺🇸","Germany":"🇩🇪","Australia":"🇦🇺","Canada":"🇨🇦",
+  "United Kingdom":"🇬🇧","Italy":"🇮🇹","Spain":"🇪🇸","China":"🇨🇳","India":"🇮🇳",
+  "Brazil":"🇧🇷","South Korea":"🇰🇷","Thailand":"🇹🇭","Netherlands":"🇳🇱","Sweden":"🇸🇪",
+  "Singapore":"🇸🇬","New Zealand":"🇳🇿","Mexico":"🇲🇽","South Africa":"🇿🇦","Egypt":"🇪🇬",
+  "Morocco":"🇲🇦","Vietnam":"🇻🇳","Indonesia":"🇮🇩","Philippines":"🇵🇭","Portugal":"🇵🇹",
+  "Greece":"🇬🇷","Turkey":"🇹🇷","Japan":"🇯🇵","Norway":"🇳🇴","Denmark":"🇩🇰",
+  "Finland":"🇫🇮","Switzerland":"🇨🇭","Austria":"🇦🇹","Belgium":"🇧🇪","UAE":"🇦🇪",
+  "Russia":"🇷🇺","Taiwan":"🇹🇼","Malaysia":"🇲🇾","Poland":"🇵🇱","Argentina":"🇦🇷",
+  "Chile":"🇨🇱","Peru":"🇵🇪","Colombia":"🇨🇴","Kenya":"🇰🇪","Nigeria":"🇳🇬",
+  "Ghana":"🇬🇭","Ethiopia":"🇪🇹","Tanzania":"🇹🇿","Uganda":"🇺🇬","Saudi Arabia":"🇸🇦",
+  "Qatar":"🇶🇦","Israel":"🇮🇱","Iran":"🇮🇷","Pakistan":"🇵🇰","Nepal":"🇳🇵",
+  "Sri Lanka":"🇱🇰","Bangladesh":"🇧🇩","Myanmar":"🇲🇲","Cambodia":"🇰🇭","Laos":"🇱🇦",
+  "Mongolia":"🇲🇳","Kazakhstan":"🇰🇿","Ukraine":"🇺🇦","Romania":"🇷🇴","Hungary":"🇭🇺",
+  "Czech Republic":"🇨🇿","Iceland":"🇮🇸","Ireland":"🇮🇪","Croatia":"🇭🇷",
+  "Serbia":"🇷🇸","Bulgaria":"🇧🇬","Lithuania":"🇱🇹","Latvia":"🇱🇻","Estonia":"🇪🇪",
+  "Jordan":"🇯🇴","Lebanon":"🇱🇧","Oman":"🇴🇲",
+};
+const NAME_MAP = {
+  "840":"United States","276":"Germany","250":"France","826":"United Kingdom",
+  "380":"Italy","724":"Spain","392":"Japan","156":"China","356":"India",
+  "076":"Brazil","124":"Canada","036":"Australia","554":"New Zealand",
+  "410":"South Korea","764":"Thailand","702":"Singapore","528":"Netherlands",
+  "752":"Sweden","578":"Norway","208":"Denmark","246":"Finland","756":"Switzerland",
+  "040":"Austria","056":"Belgium","620":"Portugal","300":"Greece","792":"Turkey",
+  "616":"Poland","203":"Czech Republic","348":"Hungary","642":"Romania","100":"Bulgaria",
+  "191":"Croatia","705":"Slovenia","703":"Slovakia","440":"Lithuania","428":"Latvia",
+  "233":"Estonia","352":"Iceland","372":"Ireland","442":"Luxembourg","470":"Malta",
+  "196":"Cyprus","008":"Albania","807":"North Macedonia","688":"Serbia","499":"Montenegro",
+  "070":"Bosnia and Herz.","498":"Moldova","112":"Belarus","804":"Ukraine",
+  "643":"Russia","484":"Mexico","170":"Colombia","604":"Peru","032":"Argentina",
+  "152":"Chile","858":"Uruguay","600":"Paraguay","068":"Bolivia","218":"Ecuador",
+  "862":"Venezuela","320":"Guatemala","340":"Honduras","188":"Costa Rica","591":"Panama",
+  "192":"Cuba","388":"Jamaica","710":"South Africa","404":"Kenya","800":"Uganda",
+  "834":"Tanzania","566":"Nigeria","288":"Ghana","231":"Ethiopia","686":"Senegal",
+  "818":"Egypt","504":"Morocco","788":"Tunisia","012":"Algeria","434":"Libya",
+  "729":"Sudan","706":"Somalia","716":"Zimbabwe","894":"Zambia","508":"Mozambique",
+  "682":"Saudi Arabia","784":"UAE","634":"Qatar","414":"Kuwait","512":"Oman",
+  "364":"Iran","368":"Iraq","376":"Israel","400":"Jordan","422":"Lebanon",
+  "398":"Kazakhstan","860":"Uzbekistan","031":"Azerbaijan","268":"Georgia","051":"Armenia",
+  "586":"Pakistan","050":"Bangladesh","144":"Sri Lanka","524":"Nepal","104":"Myanmar",
+  "116":"Cambodia","418":"Laos","496":"Mongolia","458":"Malaysia","608":"Philippines",
+  "360":"Indonesia","158":"Taiwan","704":"Vietnam","646":"Rwanda","450":"Madagascar",
+};
+const STUDY_COLOR   = '#185FA5';
+const TRAVEL_COLOR  = '#EF9F27';
+const UNVISITED_CLR = '#D1D5DB';
+const HEAT_RAMP     = ['#DBEAFE','#93C5FD','#60A5FA','#3B82F6','#1D4ED8','#1e3a8a'];
+
+/* ── State ── */
+let entries         = [];
+let currentType     = 'travel';
+let currentFilter   = 'all';
+let selectedCountry = null;
+let svgEl, geoFeatures = [], d3ref;
+let isMobile        = () => window.innerWidth <= 700;
+let mapLocked       = true;
+let currentTab      = 'map';
+
+/* ── Populate select ── */
+const countrySelect = document.getElementById('f-country');
+[...COUNTRIES_LIST].sort((a,b) => a.localeCompare(b)).forEach(name => {
+  const o = document.createElement('option');
+  o.value = name;
+  o.textContent = (EMOJIS[name]||'🌍') + ' ' + name;
+  countrySelect.appendChild(o);
+});
+
+/* ════════════════════════════════════════════════════
+   Mobile Tab Switching
+════════════════════════════════════════════════════ */
+window.switchTab = function(tab) {
+  currentTab = tab;
+  const mapCol     = document.getElementById('map-col');
+  const rightPanel = document.getElementById('right-panel');
+  const tabs       = document.querySelectorAll('.mtab');
+
+  tabs.forEach(t => t.classList.remove('active'));
+
+  if (tab === 'map') {
+    document.getElementById('tab-map').classList.add('active');
+    mapCol.classList.add('active-pane');
+    mapCol.classList.remove('hidden-pane');
+    rightPanel.classList.remove('active-pane');
+    // Re-lock map when returning to map tab
+    if (isMobile()) lockMap();
+  } else if (tab === 'form') {
+    document.getElementById('tab-form').classList.add('active');
+    mapCol.classList.remove('active-pane');
+    mapCol.classList.add('hidden-pane');
+    rightPanel.classList.add('active-pane');
+    // Scroll to form
+    setTimeout(() => {
+      document.getElementById('form-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 340);
+  } else if (tab === 'stats') {
+    document.getElementById('tab-stats').classList.add('active');
+    mapCol.classList.remove('active-pane');
+    mapCol.classList.add('hidden-pane');
+    rightPanel.classList.add('active-pane');
+    // Scroll to top (stats)
+    setTimeout(() => {
+      rightPanel.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 50);
+  }
+};
+
+/* ════════════════════════════════════════════════════
+   Map Lock / Unlock (mobile)
+════════════════════════════════════════════════════ */
+window.unlockMap = function() {
+  mapLocked = false;
+  const guard = document.getElementById('map-touch-guard');
+  guard.classList.add('unlocked');
+  // Show re-lock hint
+  const hint = document.getElementById('map-lock-hint');
+  hint.classList.add('show');
+  setTimeout(() => hint.classList.remove('show'), 2500);
+};
+
+function lockMap() {
+  mapLocked = true;
+  const guard = document.getElementById('map-touch-guard');
+  guard.classList.remove('unlocked');
+}
+
+// Swipe up on map-wrap to re-lock
+(function setupSwipeLock() {
+  const wrap = document.getElementById('map-wrap');
+  let startY = null;
+  wrap.addEventListener('touchstart', e => { startY = e.touches[0].clientY; }, { passive: true });
+  wrap.addEventListener('touchend', e => {
+    if (startY === null) return;
+    const dy = startY - e.changedTouches[0].clientY;
+    if (dy > 60 && !mapLocked) { // swipe up 60px to re-lock
+      lockMap();
+      const hint = document.getElementById('map-lock-hint');
+      hint.classList.add('show');
+      setTimeout(() => hint.classList.remove('show'), 1800);
+    }
+    startY = null;
+  }, { passive: true });
+})();
+
+/* ════════════════════════════════════════════════════
+   Helpers
+════════════════════════════════════════════════════ */
+function getStats(name, filter) {
+  let es = entries.filter(e => e.country === name);
+  if (filter !== 'all' && filter !== 'heat') es = es.filter(e => e.type === filter);
+  return {
+    total:   es.length,
+    study:   es.filter(e => e.type === 'study').length,
+    travel:  es.filter(e => e.type === 'travel').length,
+    entries: es,
+  };
+}
+function heatColor(count, maxCount) {
+  if (count === 0 || maxCount === 0) return UNVISITED_CLR;
+  const idx = Math.min(Math.ceil((count / maxCount) * (HEAT_RAMP.length - 1)), HEAT_RAMP.length - 1);
+  return HEAT_RAMP[idx];
+}
+function buildPatterns(d3, features) {
+  const defs = svgEl.select('defs');
+  features.forEach(f => {
+    const id = 'pat_' + f.properties.name.replace(/[^a-zA-Z]/g,'_');
+    if (defs.select('#' + id).empty()) {
+      defs.append('pattern')
+        .attr('id', id).attr('patternUnits','userSpaceOnUse')
+        .attr('width', 10).attr('height', 10)
+        .call(p => {
+          p.append('rect').attr('width',5).attr('height',10).attr('fill', STUDY_COLOR);
+          p.append('rect').attr('x',5).attr('width',5).attr('height',10).attr('fill', TRAVEL_COLOR);
+        });
+    }
+  });
+}
+
+/* ════════════════════════════════════════════════════
+   Render map
+════════════════════════════════════════════════════ */
+function renderMap() {
+  if (!svgEl || !geoFeatures.length) return;
+  const isHeat  = currentFilter === 'heat';
+  const maxCnt  = isHeat
+    ? Math.max(...geoFeatures.map(f => getStats(f.properties.name,'heat').total), 1)
+    : 1;
+  svgEl.select('g.countries').selectAll('path.country').each(function(d) {
+    const name = d.properties.name;
+    const el   = d3ref.select(this);
+    el.classed('selected', name === selectedCountry);
+    if (isHeat) {
+      el.attr('fill', heatColor(getStats(name,'heat').total, maxCnt));
+      return;
+    }
+    const { study, travel } = getStats(name, currentFilter);
+    const total = study + travel;
+    if (!total)  { el.attr('fill', UNVISITED_CLR); return; }
+    if (!study)  { el.attr('fill', TRAVEL_COLOR);  return; }
+    if (!travel) { el.attr('fill', STUDY_COLOR);   return; }
+    el.attr('fill', `url(#pat_${name.replace(/[^a-zA-Z]/g,'_')})`);
+  });
+  svgEl.select('g.countries').selectAll('path.country')
+    .style('cursor', d => getStats(d.properties.name,'all').total > 0 ? 'pointer' : 'crosshair');
+}
+
+/* ════════════════════════════════════════════════════
+   Stats
+════════════════════════════════════════════════════ */
+function animNum(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = val;
+  el.classList.remove('count-anim'); void el.offsetWidth; el.classList.add('count-anim');
+}
+/* ── Ranking helpers (module-level, outside updateStats) ── */
+function buildRanking(type) {
+  const counts = {};
+  entries.filter(e => e.type === type)
+         .forEach(e => { counts[e.country] = (counts[e.country]||0)+1; });
+  return Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,3);
+}
+function rankHTML(list, type) {
+  const isStudy  = type === 'study';
+  const accent   = isStudy ? '#185FA5' : '#EF9F27';
+  const bgAccent = isStudy ? 'bg-blue-50' : 'bg-amber-50';
+  const medals   = ['🥇','🥈','🥉'];
+  if (list.length === 0) {
+    const label = isStudy ? '留学' : '旅行';
+    return `<p class="text-[12px] text-slate-400 text-center py-3">まだ${label}情報がありません</p>`;
+  }
+  return list.map(([c,n],i) => `
+    <div class="flex items-center gap-2 px-2.5 py-2 rounded-lg mb-1.5
+                ${i===0 ? bgAccent : 'bg-slate-50'}">
+      <span class="text-[15px] w-6 text-center shrink-0">${medals[i]}</span>
+      <span class="text-[12px] flex-1 text-slate-700 font-medium">${EMOJIS[c]||'🌍'} ${c}</span>
+      <span class="text-[11px] px-2 py-0.5 rounded-full font-semibold"
+            style="background:${i===0 ? accent+'22' : '#f1f5f9'};
+                   color:${i===0 ? accent : '#94a3b8'}">
+        ${n}件
+      </span>
+    </div>`).join('');
+}
+
+function updateStats() {
+  const visited = [...new Set(entries.map(e => e.country))];
+  const pct     = Math.round(visited.length / 193 * 100);
+  animNum('h-countries', visited.length);
+  animNum('h-study',     entries.filter(e=>e.type==='study').length);
+  animNum('h-travel',    entries.filter(e=>e.type==='travel').length);
+  animNum('s-countries', visited.length);
+  animNum('s-total',     entries.length);
+  document.getElementById('adv-count').textContent    = `193カ国中 ${visited.length}カ国`;
+  document.getElementById('progress-pct').textContent = pct + '%';
+  document.getElementById('progress-bar').style.width = pct + '%';
+  document.getElementById('top3-study').innerHTML  = rankHTML(buildRanking('study'),  'study');
+  document.getElementById('top3-travel').innerHTML = rankHTML(buildRanking('travel'), 'travel');
+  document.getElementById('recent-list').innerHTML = entries.length === 0
+    ? '<p class="text-[12px] text-slate-400 text-center py-3">まだ投稿がありません</p>'
+    : [...entries].reverse().slice(0,5).map(e => `
+        <div class="flex items-start gap-2 px-2.5 py-2 rounded-lg bg-slate-50 mb-1">
+          <div class="w-1.5 h-1.5 rounded-full mt-[5px] shrink-0"
+               style="background:${e.type==='study'?STUDY_COLOR:TRAVEL_COLOR}"></div>
+          <div>
+            <div class="text-[12px] font-medium text-slate-700">${e.nickname} — ${EMOJIS[e.country]||'🌍'}${e.country}</div>
+            <div class="text-[11px] text-slate-400 mt-0.5 leading-snug">${e.comment}</div>
+          </div>
+        </div>`).join('');
+}
+
+/* ════════════════════════════════════════════════════
+   Tooltip
+════════════════════════════════════════════════════ */
+const tooltip = document.getElementById('tooltip');
+function showTooltip(event, name) {
+  if (isMobile()) return; // mobile uses tap-to-select instead
+  const s = getStats(name, 'all');
+  document.getElementById('tt-country').textContent = (EMOJIS[name]||'🌍') + ' ' + name;
+  if (s.total === 0) {
+    document.getElementById('tt-summary').textContent = 'まだ投稿がありません';
+    document.getElementById('tt-entries').innerHTML   = '';
+  } else {
+    document.getElementById('tt-summary').textContent =
+      `合計 ${s.total}人（留学 ${s.study} / 旅行 ${s.travel}）`;
+    document.getElementById('tt-entries').innerHTML = s.entries.map(e => `
+      <div class="border-l-[3px] pl-2 mb-2"
+           style="border-color:${e.type==='study'?STUDY_COLOR:TRAVEL_COLOR}">
+        <div class="flex items-center gap-1.5">
+          <span class="text-[12px] font-medium text-slate-800">${e.nickname}</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                style="background:${e.type==='study'?'#EFF6FF':'#FAEEDA'};
+                       color:${e.type==='study'?'#1e40af':'#633806'}">
+            ${e.type==='study'?'留学':'旅行'}
+          </span>
+        </div>
+        <div class="text-[11px] text-slate-500 mt-0.5">${e.type==='study'?'🎓':'📍'} ${e.detail}</div>
+        <div class="text-[11px] text-slate-600 italic mt-0.5">"${e.comment}"</div>
+      </div>`).join('');
+  }
+  document.getElementById('tt-hint').textContent =
+    COUNTRIES_LIST.includes(name) ? 'クリックでフォームに自動入力 →' : '';
+  const wRect = document.getElementById('map-wrap').getBoundingClientRect();
+  let x = event.clientX - wRect.left + 14;
+  let y = event.clientY - wRect.top  + 14;
+  if (x + 275 > wRect.width)  x = event.clientX - wRect.left - 280;
+  if (y + 300 > wRect.height) y = event.clientY - wRect.top  - 280;
+  tooltip.style.left    = Math.max(4, x) + 'px';
+  tooltip.style.top     = Math.max(4, y) + 'px';
+  tooltip.style.opacity = '1';
+}
+function hideTooltip() { tooltip.style.opacity = '0'; }
+
+/* ════════════════════════════════════════════════════
+   Click-to-select
+════════════════════════════════════════════════════ */
+function selectCountry(name) {
+  selectedCountry = name;
+  const opt = [...countrySelect.options].find(o => o.value === name);
+  if (opt) countrySelect.value = name;
+  const badge = document.getElementById('selected-badge');
+  badge.classList.remove('hidden'); badge.classList.add('flex');
+  document.getElementById('badge-text').textContent = (EMOJIS[name]||'🌍') + ' ' + name;
+  renderMap();
+
+  // Mobile: auto-switch to form tab and show banner
+  if (isMobile()) {
+    switchTab('form');
+    const banner = document.getElementById('mobile-autofill-banner');
+    document.getElementById('banner-country-name').textContent = (EMOJIS[name]||'🌍') + ' ' + name;
+    banner.classList.remove('hidden');
+    banner.classList.add('flex');
+    setTimeout(() => {
+      banner.classList.add('hidden');
+      banner.classList.remove('flex');
+    }, 3000);
+  }
+}
+
+window.clearSelection = () => {
+  selectedCountry = null;
+  document.getElementById('selected-badge').classList.add('hidden');
+  document.getElementById('selected-badge').classList.remove('flex');
+  renderMap();
+};
+
+/* ════════════════════════════════════════════════════
+   D3 map init
+════════════════════════════════════════════════════ */
+Promise.all([
+  import('https://cdn.jsdelivr.net/npm/d3@7/+esm'),
+  import('https://cdn.jsdelivr.net/npm/topojson-client@3/+esm'),
+  fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(r => r.json())
+]).then(([d3, topojson, world]) => {
+  d3ref = d3;
+  const countries = topojson.feature(world, world.objects.countries);
+  geoFeatures     = countries.features;
+  geoFeatures.forEach(f => {
+    if (!f.properties) f.properties = {};
+    const m = NAME_MAP[String(f.id).padStart(3,'0')];
+    if (m) f.properties.name = m;
+    else if (!f.properties.name) f.properties.name = 'Unknown';
+  });
+
+  const svg    = d3.select('#map-svg');
+  svgEl        = svg;
+  svg.style('background','#c8dde8');
+  svg.append('defs');
+  buildPatterns(d3, geoFeatures);
+
+  const proj   = d3.geoNaturalEarth1().scale(153).translate([480, 250]);
+  const pathFn = d3.geoPath(proj);
+
+  // D3 zoom
+  const zoom = d3.zoom()
+    .scaleExtent([1, 8])
+    .filter(event => {
+      // On mobile, block zoom gestures when map is locked
+      if (isMobile() && mapLocked) return false;
+      return !event.ctrlKey && !event.button;
+    })
+    .on('zoom', (event) => {
+      g.attr('transform', event.transform);
+      svg.select('path.borders').attr('transform', event.transform);
+    });
+
+  svg.call(zoom);
+
+  // Block single-finger touch scroll on map when locked (prevent page scroll interference)
+  document.getElementById('map-svg').addEventListener('touchmove', (e) => {
+    if (isMobile() && mapLocked) e.stopPropagation();
+  }, { passive: true });
+
+  const g = svg.append('g').attr('class','countries');
+  g.selectAll('path.country')
+    .data(geoFeatures).join('path')
+    .attr('class','country')
+    .attr('d', pathFn)
+    .attr('stroke','#ffffff')
+    .attr('stroke-width', 0.4)
+    .attr('fill', UNVISITED_CLR)
+    .on('mousemove', (event, d) => showTooltip(event, d.properties.name))
+    .on('mouseleave', () => hideTooltip())
+    .on('click', (_, d) => {
+      const name = d.properties.name;
+      if (COUNTRIES_LIST.includes(name)) { selectCountry(name); hideTooltip(); }
+    });
+
+  svg.append('path')
+    .datum(topojson.mesh(world, world.objects.countries, (a,b) => a !== b))
+    .attr('class','borders')
+    .attr('fill','none').attr('stroke','#ffffff').attr('stroke-width',0.3).attr('d', pathFn);
+
+  document.getElementById('loading-overlay').classList.add('hidden');
+
+  // On desktop, hide touch guard
+  if (!isMobile()) {
+    document.getElementById('map-touch-guard').style.display = 'none';
+  }
+
+  /* Firebase listener */
+  onValue(entriesRef, snap => {
+    const data = snap.val();
+    entries    = data ? Object.values(data) : [];
+    buildPatterns(d3, geoFeatures);
+    renderMap();
+    updateStats();
+    const dot = document.getElementById('sync-dot');
+    dot.style.background = '#1D9E75';
+    dot.classList.remove('pulse-anim');
+    document.getElementById('sync-label').textContent = 'リアルタイム同期中';
+  }, () => {
+    const dot = document.getElementById('sync-dot');
+    dot.style.background = '#EF4444';
+    document.getElementById('sync-label').textContent = '接続エラー';
+  });
+}).catch(err => {
+  console.error(err);
+  document.getElementById('loading-overlay').textContent = '地図の読み込みに失敗しました';
+});
+
+/* Handle resize */
+window.addEventListener('resize', () => {
+  if (!isMobile()) {
+    // Reset to desktop layout
+    const mapCol     = document.getElementById('map-col');
+    const rightPanel = document.getElementById('right-panel');
+    mapCol.classList.add('active-pane');
+    mapCol.classList.remove('hidden-pane');
+    rightPanel.classList.remove('active-pane');
+    document.getElementById('map-touch-guard').style.display = 'none';
+  } else {
+    document.getElementById('map-touch-guard').style.display = '';
+    lockMap();
+  }
+});
+
+/* ════════════════════════════════════════════════════
+   UI Handlers
+════════════════════════════════════════════════════ */
+/* ════════════════════════════════════════════════════
+   Ranking tab switch
+════════════════════════════════════════════════════ */
+window.switchRankTab = function(type) {
+  const isStudy = type === 'study';
+  document.getElementById('rank-study').classList.toggle('hidden', !isStudy);
+  document.getElementById('rank-travel').classList.toggle('hidden', isStudy);
+
+  const tabStudy  = document.getElementById('rank-tab-study');
+  const tabTravel = document.getElementById('rank-tab-travel');
+
+  if (isStudy) {
+    tabStudy.classList.add('bg-white','shadow-sm','text-blue-700');
+    tabStudy.classList.remove('text-slate-500');
+    tabTravel.classList.remove('bg-white','shadow-sm','text-amber-600');
+    tabTravel.classList.add('text-slate-500');
+  } else {
+    tabTravel.classList.add('bg-white','shadow-sm','text-amber-600');
+    tabTravel.classList.remove('text-slate-500');
+    tabStudy.classList.remove('bg-white','shadow-sm','text-blue-700');
+    tabStudy.classList.add('text-slate-500');
+  }
+};
+
+
+  currentFilter = btn.dataset.f;
+  document.querySelectorAll('.fbtn').forEach(b => {
+    b.className = 'fbtn';
+    if (b.dataset.f === currentFilter) b.classList.add(`active-${currentFilter}`);
+  });
+  const isHeat = currentFilter === 'heat';
+  document.getElementById('leg-normal').classList.toggle('hidden', isHeat);
+  document.getElementById('leg-heat').classList.toggle('hidden', !isHeat);
+  if (!isHeat) document.getElementById('leg-heat').classList.remove('flex');
+  if (isHeat)  document.getElementById('leg-heat').classList.add('flex');
+  renderMap();
+};
+
+window.setType = btn => {
+  currentType = btn.dataset.t;
+  document.querySelectorAll('.tbtn').forEach(b => { b.className = 'tbtn'; });
+  btn.classList.add(currentType === 'study' ? 'ts' : 'tt');
+  const isStudy = currentType === 'study';
+  document.getElementById('f-detail-label').innerHTML =
+    (isStudy ? '大学名' : 'おすすめスポット') + ' <span class="text-red-400">*</span>';
+  document.getElementById('f-detail').placeholder =
+    isStudy ? '例：University of Edinburgh' : '例：グランドキャニオン';
+};
+
+window.submitEntry = async () => {
+  const nick    = document.getElementById('f-nick').value.trim();
+  const country = document.getElementById('f-country').value;
+  const detail  = document.getElementById('f-detail').value.trim();
+  const comment = document.getElementById('f-comment').value.trim();
+  const err     = document.getElementById('err');
+  const flash   = document.getElementById('flash');
+  const btn     = document.getElementById('submit-btn');
+  const fail = msg => { err.textContent = msg; err.classList.remove('hidden'); };
+  err.classList.add('hidden');
+  if (!nick)    return fail('ニックネームを入力してください');
+  if (!country) return fail('国名を選択してください');
+  if (!detail)  return fail((currentType==='study'?'大学名':'おすすめスポット')+'を入力してください');
+  if (!comment) return fail('コメントを入力してください');
+  btn.disabled = true; btn.textContent = '送信中...';
+  try {
+    await push(entriesRef, {
+      nickname: nick, country, type: currentType,
+      comment, detail, timestamp: Date.now()
+    });
+    ['f-nick','f-country','f-detail','f-comment'].forEach(id =>
+      document.getElementById(id).value = '');
+    clearSelection();
+    flash.classList.remove('hidden');
+    setTimeout(() => flash.classList.add('hidden'), 2500);
+  } catch {
+    fail('送信に失敗しました。もう一度お試しください。');
+  }
+  btn.disabled = false; btn.textContent = '地図に追加する';
+};
+</script>
+</body>
+</html>
